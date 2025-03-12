@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -30,6 +29,7 @@ const (
                           '-------'   By: %s
 
     Current Date (UTC): %s
+    Current User: %s
 `
 )
 
@@ -113,500 +113,644 @@ var (
 	userAgent       string
 )
 
-func init() {
-	// Initialize statistics
-	stats = ScanStats{
-		ScanDate:       time.Now(),
-		SeverityCounts: make(map[string]int),
-	}
-	
-	// Parse command line flags
-	flag.StringVar(&input, "i", "", "Input source:\n  -local JS file (e.g., -i local.js)\n  -URL to JS file (e.g., -i https://domain.tld/external.js)\n  -Domain to scan (e.g., -i https://domain.tld)\n  -List of domains in a file (e.g., -i domains.txt)")
-	flag.StringVar(&output, "o", "cli", "Output destination:\n  -cli for terminal output\n  -filename.txt to save to file\n  -json for JSON output")
-	flag.IntVar(&threads, "t", runtime.NumCPU(), "Number of concurrent threads")
-	flag.IntVar(&timeout, "timeout", 30, "HTTP request timeout in seconds")
-	flag.BoolVar(&updateSecrets, "update", false, "Update secrets database from repository")
-	flag.StringVar(&customPatterns, "patterns", "", "Path to custom patterns JSON file")
-	flag.StringVar(&excludePatterns, "exclude", "", "Regex patterns to exclude (comma-separated)")
-	flag.StringVar(&regexFile, "regex-file", "", "File containing custom regex patterns for secrets")
-	flag.BoolVar(&silent, "silent", false, "Only output findings without status messages")
-	flag.BoolVar(&verbose, "v", false, "Verbose output with detailed information")
-	flag.BoolVar(&noColor, "no-color", false, "Disable colored output")
-	flag.BoolVar(&saveStats, "stats", false, "Save scan statistics to file")
-	flag.IntVar(&maxDepth, "depth", 1, "Maximum depth for crawling linked JS files")
-	flag.BoolVar(&showVersion, "version", false, "Show version information and exit")
-	flag.StringVar(&logFile, "log", "", "Log output to specified file")
-	flag.BoolVar(&jsonOutput, "json", false, "Output results in JSON format")
-	flag.BoolVar(&failOnHigh, "fail-on-high", false, "Exit with error code if high severity findings are detected")
-	flag.StringVar(&configFile, "config", "", "Path to configuration file")
-	flag.StringVar(&urlsFile, "urls-file", "", "File containing list of JavaScript URLs to scan")
-	flag.BoolVar(&recursive, "recursive", false, "Recursively scan for JavaScript files in linked resources")
-	flag.BoolVar(&skipVerify, "skip-verify", false, "Skip TLS certificate verification")
-	flag.StringVar(&userAgent, "user-agent", "FindSecret/"+VERSION, "Custom User-Agent string for HTTP requests")
-}
-
 func main() {
-	startTime = time.Now()
-	
-	// Parse flags
-	flag.Parse()
-	
-	// Configure color output
-	useColors = !noColor && isTerminal()
-	
-	// Get current date and time in UTC
-	currentDate := time.Now().UTC().Format("2006-01-02 15:04:05")
-	
-	// Display banner and version if not in silent mode
-	if !silent {
-		if useColors {
-			fmt.Printf(CYAN+BANNER+RESET, VERSION, AUTHOR, currentDate)
-		} else {
-			fmt.Printf(BANNER, VERSION, AUTHOR, currentDate)
-		}
-	}
-	
-	// Show version and exit if requested
-	if showVersion {
-		if !silent {
-			fmt.Printf("FindSecret v%s\nRuntime: %s %s/%s\nCurrent Date (UTC): %s\n", 
-				VERSION, 
-				runtime.Version(), 
-				runtime.GOOS, 
-				runtime.GOARCH,
-				currentDate)
-		}
-		os.Exit(0)
-	}
-	
-	// Show help if no input is provided
-	if len(os.Args) == 1 {
-		printUsageGuide()
-		os.Exit(0)
-	}
-	
-	// Setup logging if requested
-	if logFile != "" {
-		setupLogging(logFile)
-	}
-	
-	// Load configuration file if specified
-	if configFile != "" {
-		loadConfig(configFile)
-	}
-	
-	// Update secrets database if requested
-	if updateSecrets {
-		logInfo("Updating secrets database...")
-		downloadSecret()
-		logSuccess("Secrets database updated successfully")
-		os.Exit(0)
-	}
-	
-	// Check if any input method is provided
-	if input == "" && urlsFile == "" && len(flag.Args()) == 0 {
-		logError("No input specified. Use -i flag, -urls-file flag, or provide input as argument")
-		printUsageExample()
-		os.Exit(1)
-	}
-	
-	// If no input flag but argument is provided, use it as input
-	if input == "" && len(flag.Args()) > 0 {
-		input = flag.Args()[0]
-	}
-	
-	// Load secrets database
-	checkSecret()
-	
-	// Load custom patterns if specified
-	if customPatterns != "" {
-		loadCustomPatterns(customPatterns)
-	}
-	
-	// Load regex patterns from file if specified
-	if regexFile != "" {
-		loadRegexFromFile(regexFile)
-	}
-	
-	// Process input based on its type
-	logInfo("Starting scan...")
-	
-	// If URLs file is provided, prioritize it
-	if urlsFile != "" {
-		scanJsUrlsFromFile(urlsFile)
-	} else if input != "" {
-		// Process regular input
-		processInput(input)
-	}
-	
-	// Print scan summary
-	printScanSummary()
-	
-	// Save statistics if requested
-	if saveStats {
-		saveStatistics()
-	}
-	
-	// Exit with error code if high severity findings detected and fail-on-high flag is set
-	if failOnHigh && (stats.SeverityCounts[CRITICAL] > 0 || stats.SeverityCounts[HIGH] > 0) {
-		os.Exit(2)
-	}
-	
-	logSuccess("Scan completed")
+    // Parse command line flags
+    flag.Parse()
+
+    // Set color output based on terminal and user preference
+    useColors = isTerminal() && !noColor
+
+    // Show version if requested
+    if showVersion {
+        fmt.Printf("FindSecret v%s\n", VERSION)
+        os.Exit(0)
+    }
+
+    // Print banner with current time and user
+    if !silent {
+        currentTime := time.Now().UTC().Format("2006-01-02 15:04:05")
+        fmt.Printf(BANNER, VERSION, AUTHOR, currentTime, "the5orcerer")
+    }
+
+    // Setup logging if specified
+    if logFile != "" {
+        err := setupLogging(logFile)
+        if err != nil {
+            logError(fmt.Sprintf("Failed to setup logging: %v", err))
+            os.Exit(1)
+        }
+    }
+
+    // Load configuration if specified
+    if configFile != "" {
+        err := loadConfig(configFile)
+        if err != nil {
+            logError(fmt.Sprintf("Failed to load configuration: %v", err))
+            os.Exit(1)
+        }
+    }
+
+    // Check input parameters
+    if input == "" && !updateSecrets && urlsFile == "" {
+        printUsageGuide()
+        printUsageExample()
+        os.Exit(1)
+    }
+
+    // Record start time
+    startTime = time.Now()
+
+    // Process input
+    processInput()
+
+    // Print summary
+    if !silent {
+        printScanSummary()
+    }
+
+    // Save statistics if requested
+    if saveStats {
+        saveStatistics()
+    }
 }
 
-// processInput processes different input types
-func processInput(input string) {
-	switch checkInput(input) {
-	case "url":
-		scanSingleUrl(input)
-		
-	case "local":
-		scanLocalFile(input)
-		
-	case "domain":
-		scanDomain(input)
-		
-	case "list":
-		scanDomainList(input)
-		
-	default:
-		logError("Invalid input format")
-		printUsageExample()
-		os.Exit(1)
+func processInput() {
+    inputType := checkInput(input)
+    switch inputType {
+    case "url":
+        content := getExternalJsFile(input)
+        if content != "Not Found" {
+            findings := scanContent(content, input)
+            outputResults(input, findings)
+        }
+    case "local":
+        content := getLocalJsFile(input)
+        if content != "" {
+            findings := scanContent(content, input)
+            outputResults(input, findings)
+        }
+    case "domain":
+        scripts := getScripts(input)
+        for _, script := range scripts {
+            content := getExternalJsFile(script)
+            if content != "Not Found" {
+                findings := scanContent(content, script)
+                outputResults(script, findings)
+            }
+        }
+    default:
+        logError("Invalid input type")
+        printUsageGuide()
+        os.Exit(1)
+    }
+}
+
+// Utility Functions
+func isTerminal() bool {
+	fileInfo, _ := os.Stdout.Stat()
+	return (fileInfo.Mode() & os.ModeCharDevice) != 0
+}
+
+func printUsageGuide() {
+	fmt.Printf(`Usage: findsecret [options] [input]
+Options:
+  -i string
+    	Input source (file, URL, or domain)
+  -o string
+    	Output destination (default "cli")
+  -t int
+    	Number of concurrent threads (default: CPU cores)
+  -timeout int
+    	HTTP request timeout in seconds (default 30)
+  -update
+    	Update secrets database
+  -patterns string
+    	Path to custom patterns JSON file
+  -exclude string
+    	Regex patterns to exclude
+  -regex-file string
+    	File containing custom regex patterns
+  -silent
+    	Only output findings
+  -v	Verbose output
+  -no-color
+    	Disable colored output
+  -stats
+    	Save scan statistics
+  -depth int
+    	Maximum crawling depth (default 1)
+  -version
+    	Show version information
+  -log string
+    	Log file path
+  -json
+    	Output in JSON format
+  -fail-on-high
+    	Exit with error on high severity findings
+  -config string
+    	Configuration file path
+  -urls-file string
+    	File containing URLs to scan
+  -recursive
+    	Scan recursively
+  -skip-verify
+    	Skip TLS verification
+  -user-agent string
+    	Custom User-Agent string
+`)
+}
+
+func printUsageExample() {
+	fmt.Printf(`
+Example usage:
+  findsecret -i example.js
+  findsecret -i https://example.com/script.js
+  findsecret -i https://example.com
+  findsecret -urls-file urls.txt
+  findsecret -update
+`)
+}
+
+func setupLogging(logFile string) error {
+	file, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("error opening log file: %v", err)
 	}
+	os.Stdout = file
+	os.Stderr = file
+	return nil
 }
 
-// scanSingleUrl scans a single JavaScript URL
-func scanSingleUrl(url string) {
-	logInfo(fmt.Sprintf("Scanning URL: %s", url))
-	
-	JsFile := getExternalJsFile(url)
-	if JsFile != "Not Found" {
-		findings := scanFile(url, JsFile)
-		stats.FilesScanned++
-		outputResults(url, findings)
-	} else {
-		logError(fmt.Sprintf("Failed to retrieve JavaScript from URL: %s", url))
+func loadConfig(configFile string) error {
+	file, err := os.Open(configFile)
+	if err != nil {
+		return fmt.Errorf("error opening config file: %v", err)
 	}
+	defer file.Close()
+
+	type Config struct {
+		ExcludePatterns []string          `json:"exclude_patterns"`
+		CustomPatterns  map[string]string `json:"custom_patterns"`
+		UserAgent       string           `json:"user_agent"`
+		Timeout         int              `json:"timeout"`
+		MaxDepth        int              `json:"max_depth"`
+	}
+
+	var config Config
+	if err := json.NewDecoder(file).Decode(&config); err != nil {
+		return fmt.Errorf("error parsing config file: %v", err)
+	}
+
+	if config.UserAgent != "" {
+		userAgent = config.UserAgent
+	}
+	if config.Timeout > 0 {
+		timeout = config.Timeout
+	}
+	if config.MaxDepth > 0 {
+		maxDepth = config.MaxDepth
+	}
+	if len(config.ExcludePatterns) > 0 {
+		excludePatterns = strings.Join(config.ExcludePatterns, ",")
+	}
+
+	return nil
 }
 
-// scanLocalFile scans a local JavaScript file
-func scanLocalFile(filePath string) {
-	logInfo(fmt.Sprintf("Scanning local file: %s", filePath))
-	
-	JsFile := getLocalJsFile(filePath)
-	findings := scanFile(filePath, JsFile)
-	stats.FilesScanned++
-	outputResults(filePath, findings)
-}
-
-// scanDomain scans a domain for JavaScript files
-func scanDomain(domain string) {
-	logInfo(fmt.Sprintf("Scanning domain: %s", domain))
-	
-	JsFileList := getScripts(domain)
-	logInfo(fmt.Sprintf("Found %d JavaScript files", len(JsFileList)))
-	
-	if len(JsFileList) == 0 {
-		logWarning("No JavaScript files found. If the site uses SPA or dynamic loading, try increasing depth with -depth flag")
+func printScanSummary() {
+	if silent {
 		return
 	}
-	
-	scanJsUrls(JsFileList)
-}
 
-// scanDomainList scans a list of domains from a file
-func scanDomainList(filePath string) {
-	domains := getDomainList(filePath)
-	logInfo(fmt.Sprintf("Scanning %d domains from list", len(domains)))
-	
-	for _, domain := range domains {
-		if domain == "" {
-			continue
-		}
-		
-		logInfo(fmt.Sprintf("Processing domain: %s", domain))
-		JsFileList := getScripts(domain)
-		logInfo(fmt.Sprintf("Found %d JavaScript files on %s", len(JsFileList), domain))
-		
-		if len(JsFileList) > 0 {
-			scanJsUrls(JsFileList)
-		}
-	}
-}
+	duration := time.Since(startTime).Seconds()
+	stats.TimeElapsed = duration
 
-// scanJsUrlsFromFile scans JavaScript URLs from a file
-func scanJsUrlsFromFile(filePath string) {
-	urls := readLinesFromFile(filePath)
-	logInfo(fmt.Sprintf("Scanning %d JavaScript URLs from file", len(urls)))
-	
-	scanJsUrls(urls)
-}
+	fmt.Printf("\nScan Summary:\n")
+	fmt.Printf("============\n")
+	fmt.Printf("Files Scanned: %d\n", stats.FilesScanned)
+	fmt.Printf("Secrets Found: %d\n", stats.SecretsFound)
+	fmt.Printf("Time Elapsed: %.2f seconds\n", duration)
 
-// scanJsUrls scans a list of JavaScript URLs concurrently
-func scanJsUrls(urls []string) {
-	var wg sync.WaitGroup
-	resultChan := make(chan []Finding, len(urls))
-	semaphore := make(chan struct{}, threads)
-	
-	for _, url := range urls {
-		if url == "" {
-			continue
+	fmt.Printf("\nFindings by Severity:\n")
+	fmt.Printf("===================\n")
+	for severity, count := range stats.SeverityCounts {
+		var color string
+		switch severity {
+		case CRITICAL:
+			color = RED
+		case HIGH:
+			color = MAGENTA
+		case MEDIUM:
+			color = YELLOW
+		case LOW:
+			color = BLUE
+		default:
+			color = RESET
 		}
-		
-		wg.Add(1)
-		semaphore <- struct{}{}
-		
-		go func(url string) {
-			defer wg.Done()
-			defer func() { <-semaphore }()
-			
-			if verbose {
-				logInfo(fmt.Sprintf("Fetching: %s", url))
-			}
-			
-			JsFile := getExternalJsFile(url)
-			if JsFile != "Not Found" {
-				findings := scanFile(url, JsFile)
-				resultChan <- findings
-				
-				// Scan for additional JS references if recursive flag is set
-				if recursive && maxDepth > 1 {
-					additionalUrls := extractJsReferences(JsFile)
-					for _, addUrl := range additionalUrls {
-						// Make relative URLs absolute
-						if !strings.HasPrefix(addUrl, "http") {
-							baseUrl := getBaseUrl(url)
-							addUrl = baseUrl + addUrl
-						}
-						
-						if verbose {
-							logInfo(fmt.Sprintf("Found additional JS: %s", addUrl))
-						}
-						
-						additionalJs := getExternalJsFile(addUrl)
-						if additionalJs != "Not Found" {
-							addFindings := scanFile(addUrl, additionalJs)
-							resultChan <- addFindings
-						}
-					}
-				}
-			}
-		}(url)
-	}
-	
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-	
-	for findings := range resultChan {
-		if len(findings) > 0 {
-			stats.FilesScanned++
-			outputResults(findings[0].Source, findings)
+
+		if useColors {
+			fmt.Printf("%s%s: %d%s\n", color, severity, count, RESET)
+		} else {
+			fmt.Printf("%s: %d\n", severity, count)
 		}
 	}
 }
 
-// scanFile scans a file content for secrets using loaded patterns
-func scanFile(source, content string) []Finding {
-	var findings []Finding
-	
-	// Skip if content is empty
-	if content == "" {
-		return findings
+func saveStatistics() {
+	statsFile := fmt.Sprintf("scan_stats_%s.json", time.Now().Format("20060102_150405"))
+	data, err := json.MarshalIndent(stats, "", "  ")
+	if err != nil {
+		logError(fmt.Sprintf("Failed to marshal statistics: %v", err))
+		return
 	}
-	
-	// Check if file should be excluded
-	if shouldExclude(source) {
-		logInfo(fmt.Sprintf("Skipping excluded file: %s", source))
-		return findings
+
+	err = os.WriteFile(statsFile, data, 0644)
+	if err != nil {
+		logError(fmt.Sprintf("Failed to save statistics: %v", err))
+		return
 	}
-	
-	// Split content into lines for line number tracking
-	lines := strings.Split(content, "\n")
-	
-	// Scan with default patterns
-	for _, secret := range secrets {
-		for _, pattern := range secret.Patterns {
-			re, err := regexp.Compile(pattern)
-			if err != nil {
-				logWarning(fmt.Sprintf("Invalid regex pattern: %s", pattern))
-				continue
-			}
-			
-			// Check each line
-			for lineNum, line := range lines {
-				matches := re.FindAllString(line, -1)
-				
-				// Save multiple matches
-				for _, matchVal := range matches {
-					if matchVal != "" {
-						finding := Finding{
-							Source:   source,
-							Secret:   matchVal,
-							Type:     secret.Name,
-							Severity: secret.Severity,
-							Line:     lineNum + 1,
-						}
-						findings = append(findings, finding)
-						stats.SecretsFound++
-						stats.SeverityCounts[secret.Severity]++
-					}
-				}
-			}
-		}
-	}
-	
-	// Scan with custom regex patterns if provided
-	if customRegexMap != nil {
-		for name, patterns := range customRegexMap {
-			for _, pattern := range patterns {
-				re, err := regexp.Compile(pattern)
-				if err != nil {
-					logWarning(fmt.Sprintf("Invalid custom regex pattern: %s", pattern))
-					continue
-				}
-				
-				// Check each line
-				for lineNum, line := range lines {
-					matches := re.FindAllString(line, -1)
-					
-					// Save multiple matches
-					for _, matchVal := range matches {
-						if matchVal != "" {
-							finding := Finding{
-								Source:   source,
-								Secret:   matchVal,
-								Type:     name,
-								Severity: "CUSTOM",
-								Line:     lineNum + 1,
-							}
-							findings = append(findings, finding)
-							stats.SecretsFound++
-							stats.SeverityCounts["CUSTOM"]++
-						}
-					}
-				}
-			}
-		}
-	}
-	
-	return findings
+
+	logSuccess(fmt.Sprintf("Statistics saved to %s", statsFile))
 }
 
-// checkSecret ensures the secrets database is available
-func checkSecret() {
-	homeDir, err := os.UserHomeDir()
-	check(err)
-	
-	secretsDir := filepath.Join(homeDir, "findsecret")
-	secretsPath := filepath.Join(secretsDir, "secrets.json")
-	
-	if _, err := os.Stat(secretsPath); err != nil {
-		logInfo("Secrets database not found. Downloading...")
-		downloadSecret()
-		logSuccess("Secrets database downloaded successfully")
+func logInfo(message string) {
+	if !silent {
+		if useColors {
+			fmt.Printf("%s[*]%s %s\n", BLUE, RESET, message)
+		} else {
+			fmt.Printf("[*] %s\n", message)
+		}
 	}
-	
-	secrets = readSecrets()
-	logInfo(fmt.Sprintf("Loaded %d secret patterns", len(secrets)))
 }
 
-// downloadSecret downloads the secrets database from the repository
-func downloadSecret() {
-	homeDir, err := os.UserHomeDir()
-	check(err)
-	
-	secretsDir := filepath.Join(homeDir, "findsecret")
-	secretsPath := filepath.Join(secretsDir, "secrets.json")
-	
-	// Create directory if it doesn't exist
-	if _, err := os.Stat(secretsDir); os.IsNotExist(err) {
-		err = os.Mkdir(secretsDir, 0755)
-		check(err)
+func logSuccess(message string) {
+	if !silent {
+		if useColors {
+			fmt.Printf("%s[+]%s %s\n", GREEN, RESET, message)
+		} else {
+			fmt.Printf("[+] %s\n", message)
+		}
 	}
-	
-	// Create or truncate the secrets file
-	jsonFile, err := os.Create(secretsPath)
-	check(err)
-	defer jsonFile.Close()
-	
-	// Set timeout for HTTP client
+}
+
+func logError(message string) {
+	if useColors {
+		fmt.Printf("%s[-]%s %s\n", RED, RESET, message)
+	} else {
+		fmt.Printf("[-] %s\n", message)
+	}
+}
+
+func logWarning(message string) {
+	if !silent {
+		if useColors {
+			fmt.Printf("%s[!]%s %s\n", YELLOW, RESET, message)
+		} else {
+			fmt.Printf("[!] %s\n", message)
+		}
+	}
+}
+
+func checkInput(input string) string {
+	if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
+		if strings.HasSuffix(input, ".js") {
+			return "url"
+		}
+		return "domain"
+	}
+
+	if strings.HasSuffix(input, ".txt") {
+		return "list"
+	}
+
+	if strings.HasSuffix(input, ".js") {
+		return "local"
+	}
+
+	return "unknown"
+}
+
+func getExternalJsFile(jsUrl string) string {
 	client := &http.Client{
 		Timeout: time.Duration(timeout) * time.Second,
 	}
-	
-	// Download secrets file
-	resp, err := client.Get("https://raw.githubusercontent.com/burak0x01/findsecret/main/secrets.json")
-	check(err)
+
+	req, err := http.NewRequest("GET", jsUrl, nil)
+	if err != nil {
+		logError(fmt.Sprintf("Failed to create request: %v", err))
+		return "Not Found"
+	}
+
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		logError(fmt.Sprintf("Failed to download JavaScript: %v", err))
+		return "Not Found"
+	}
 	defer resp.Body.Close()
-	
-	// Check response status
+
 	if resp.StatusCode != http.StatusOK {
-		logError(fmt.Sprintf("Failed to download secrets. Status: %s", resp.Status))
-		os.Exit(1)
+		logError(fmt.Sprintf("Failed to download JavaScript. Status: %s", resp.Status))
+		return "Not Found"
 	}
-	
-	// Copy response body to file
-	_, err = io.Copy(jsonFile, resp.Body)
-	check(err)
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logError(fmt.Sprintf("Failed to read response body: %v", err))
+		return "Not Found"
+	}
+
+	return string(body)
 }
 
-// readSecrets loads the secrets database
-func readSecrets() []Secrets {
-	var secrets []Secrets
-	
-	homeDir, err := os.UserHomeDir()
-	check(err)
-	
-	secretsPath := filepath.Join(homeDir, "findsecret", "secrets.json")
-	
-	jsonFile, err := os.Open(secretsPath)
-	check(err)
-	defer jsonFile.Close()
-	
-	byteValue, _ := io.ReadAll(jsonFile)
-	err = json.Unmarshal(byteValue, &secrets)
-	check(err)
-	
-	// Set default severity if not specified
-	for i := range secrets {
-		if secrets[i].Severity == "" {
-			secrets[i].Severity = MEDIUM
-		}
+func getLocalJsFile(filePath string) string {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		logError(fmt.Sprintf("Failed to read file: %v", err))
+		return ""
 	}
-	
-	return secrets
+	return string(content)
 }
 
-// loadCustomPatterns loads custom patterns from a JSON file
-func loadCustomPatterns(path string) {
-	var customSecrets []Secrets
-	
-	jsonFile, err := os.Open(path)
-	if err != nil {
-		logError(fmt.Sprintf("Failed to open custom patterns file: %v", err))
-		return
+func getScripts(domain string) []string {
+	var scripts []string
+
+	if !strings.HasPrefix(domain, "http") {
+		domain = "https://" + domain
 	}
-	defer jsonFile.Close()
-	
-	byteValue, _ := io.ReadAll(jsonFile)
-	err = json.Unmarshal(byteValue, &customSecrets)
-	if err != nil {
-		logError(fmt.Sprintf("Failed to parse custom patterns: %v", err))
-		return
+
+	client := &http.Client{
+		Timeout: time.Duration(timeout) * time.Second,
 	}
-	
-	// Set default severity if not specified
-	for i := range customSecrets {
-		if customSecrets[i].Severity == "" {
-			customSecrets[i].Severity = MEDIUM
+
+	req, err := http.NewRequest("GET", domain, nil)
+	if err != nil {
+		logError(fmt.Sprintf("Failed to create request: %v", err))
+		return scripts
+	}
+
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		logError(fmt.Sprintf("Failed to fetch domain: %v", err))
+		return scripts
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logError(fmt.Sprintf("Failed to fetch domain. Status: %s", resp.Status))
+		return scripts
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logError(fmt.Sprintf("Failed to read response body: %v", err))
+		return scripts
+	}
+
+	content := string(body)
+	scriptUrls := extractScriptUrls(content)
+
+	baseUrl, _ := url.Parse(domain)
+	for _, scriptUrl := range scriptUrls {
+		if strings.HasSuffix(scriptUrl, ".js") {
+			if !strings.HasPrefix(scriptUrl, "http") {
+				scriptUrl = makeAbsoluteUrl(baseUrl, scriptUrl)
+			}
+			scripts = append(scripts, scriptUrl)
 		}
 	}
-	
-	// Append custom patterns to secrets
-	secrets = append(secrets, customSecrets...)
-	logInfo(fmt.Sprintf("Loaded %d custom patterns", len(customSecrets)))
+
+	return scripts
+}
+
+func getDomainList(filePath string) []string {
+	var domains []string
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		logError(fmt.Sprintf("Failed to open domain list: %v", err))
+		return domains
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		domain := strings.TrimSpace(scanner.Text())
+		if domain != "" && !strings.HasPrefix(domain, "#") {
+			domains = append(domains, domain)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		logError(fmt.Sprintf("Error reading domain list: %v", err))
+	}
+
+	return domains
+}
+
+func loadRegexFromFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("failed to open regex file: %v", err)
+	}
+	defer file.Close()
+
+	customRegexMap = make(map[string][]string)
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			logWarning(fmt.Sprintf("Invalid regex line format: %s", line))
+			continue
+		}
+
+		name := strings.TrimSpace(parts[0])
+		pattern := strings.TrimSpace(parts[1])
+
+		customRegexMap[name] = append(customRegexMap[name], pattern)
+	}
+
+	return scanner.Err()
+}
+
+// Continue from outputResults function...
+func outputResults(source string, findings []Finding) {
+    if len(findings) == 0 {
+        return
+    }
+
+    if jsonOutput {
+        outputJSON(findings)
+        return
+    }
+
+    if output != "cli" {
+        outputToFile(findings)
+        return
+    }
+
+    for _, finding := range findings {
+        if useColors {
+            var color string
+            switch finding.Severity {
+            case CRITICAL:
+                color = RED
+            case HIGH:
+                color = MAGENTA
+            case MEDIUM:
+                color = YELLOW
+            case LOW:
+                color = BLUE
+            default:
+                color = RESET
+            }
+
+            fmt.Printf("\n%s[%s]%s Secret found in %s on line %d:\n", 
+                color, finding.Severity, RESET, finding.Source, finding.Line)
+            fmt.Printf("Type: %s\n", finding.Type)
+            fmt.Printf("Secret: %s\n", finding.Secret)
+        } else {
+            fmt.Printf("\n[%s] Secret found in %s on line %d:\n", 
+                finding.Severity, finding.Source, finding.Line)
+            fmt.Printf("Type: %s\n", finding.Type)
+            fmt.Printf("Secret: %s\n", finding.Secret)
+        }
+    }
+}
+
+// Helper functions for URL handling
+func extractScriptUrls(content string) []string {
+    var urls []string
+    re := regexp.MustCompile(`<script[^>]+src=["']([^"']+)["']`)
+    matches := re.FindAllStringSubmatch(content, -1)
+    
+    for _, match := range matches {
+        if len(match) > 1 {
+            urls = append(urls, match[1])
+        }
+    }
+    
+    return urls
+}
+
+func makeAbsoluteUrl(baseUrl *url.URL, relativeUrl string) string {
+    if strings.HasPrefix(relativeUrl, "//") {
+        return baseUrl.Scheme + ":" + relativeUrl
+    }
+    
+    relative, err := url.Parse(relativeUrl)
+    if err != nil {
+        return relativeUrl
+    }
+    
+    return baseUrl.ResolveReference(relative).String()
+}
+
+func outputJSON(findings []Finding) {
+    data, err := json.MarshalIndent(findings, "", "  ")
+    if err != nil {
+        logError(fmt.Sprintf("Failed to marshal findings: %v", err))
+        return
+    }
+    
+    if output == "cli" {
+        fmt.Println(string(data))
+    } else {
+        err = os.WriteFile(output, data, 0644)
+        if err != nil {
+            logError(fmt.Sprintf("Failed to write output file: %v", err))
+        }
+    }
+}
+
+func outputToFile(findings []Finding) {
+    file, err := os.OpenFile(output, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        logError(fmt.Sprintf("Failed to open output file: %v", err))
+        return
+    }
+    defer file.Close()
+    
+    for _, finding := range findings {
+        _, err := fmt.Fprintf(file, "\n[%s] Secret found in %s on line %d:\n", 
+            finding.Severity, finding.Source, finding.Line)
+        if err != nil {
+            logError(fmt.Sprintf("Failed to write to output file: %v", err))
+            return
+        }
+        
+        fmt.Fprintf(file, "Type: %s\n", finding.Type)
+        fmt.Fprintf(file, "Secret: %s\n", finding.Secret)
+    }
+}
+
+func shouldExclude(source string) bool {
+    if excludePatterns == "" {
+        return false
+    }
+    
+    patterns := strings.Split(excludePatterns, ",")
+    for _, pattern := range patterns {
+        re, err := regexp.Compile(strings.TrimSpace(pattern))
+        if err != nil {
+            logWarning(fmt.Sprintf("Invalid exclude pattern: %s", pattern))
+            continue
+        }
+        
+        if re.MatchString(source) {
+            return true
+        }
+    }
+    
+    return false
+}
+
+// Error checking helper
+func check(err error) {
+    if err != nil {
+        logError(fmt.Sprintf("Fatal error: %v", err))
+        os.Exit(1)
+    }
+}
+
+// init function to set up initial configuration
+func init() {
+    // Initialize statistics
+    stats = ScanStats{
+        ScanDate:       time.Now(),
+        SeverityCounts: make(map[string]int),
+    }
+    
+    // Parse command line flags
+    flag.StringVar(&input, "i", "", "Input source (file, URL, or domain)")
+    flag.StringVar(&output, "o", "cli", "Output destination")
+    flag.IntVar(&threads, "t", runtime.NumCPU(), "Number of concurrent threads")
+    flag.IntVar(&timeout, "timeout", 30, "HTTP request timeout in seconds")
+    flag.BoolVar(&updateSecrets, "update", false, "Update secrets database")
+    flag.StringVar(&customPatterns, "patterns", "", "Path to custom patterns JSON file")
+    flag.StringVar(&excludePatterns, "exclude", "", "Regex patterns to exclude")
+    flag.StringVar(&regexFile, "regex-file", "", "File containing custom regex patterns")
+    flag.BoolVar(&silent, "silent", false, "Only output findings")
+    flag.BoolVar(&verbose, "v", false, "Verbose output")
+    flag.BoolVar(&noColor, "no-color", false, "Disable colored output")
+    flag.BoolVar(&saveStats, "stats", false, "Save scan statistics")
+    flag.IntVar(&maxDepth, "depth", 1, "Maximum crawling depth")
+    flag.BoolVar(&showVersion, "version", false, "Show version information")
+    flag.StringVar(&logFile, "log", "", "Log file path")
+    flag.BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+    flag.BoolVar(&failOnHigh, "fail-on-high", false, "Exit with error on high severity findings")
+    flag.StringVar(&configFile, "config", "", "Path to configuration file")
+    flag.StringVar(&urlsFile, "urls-file", "", "File containing URLs to scan")
+    flag.BoolVar(&recursive, "recursive", false, "Scan recursively")
+    flag.BoolVar(&skipVerify, "skip-verify", false, "Skip TLS verification")
+    flag.StringVar(&userAgent, "user-agent", "FindSecret/"+VERSION, "Custom User-Agent string")
 }
