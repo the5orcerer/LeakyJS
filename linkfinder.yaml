@@ -1,0 +1,28 @@
+- pattern:
+    name: JavaScript File
+    regex: "(?:src|href)=['\"]([^'\"]*\\.js(?:\\?[^'\"]*)?)['\"]"
+    confidence: medium
+- pattern:
+    name: API Endpoint
+    regex: "(?:url|endpoint|api):\\s*['\"]([/][^'\"]{3,}|https?://[^'\"]+)['\"]"
+    confidence: medium
+- pattern:
+    name: AJAX Request
+    regex: "\\.(?:ajax|get|post|fetch)\\(['\"]([^'\"]*)['\"]"
+    confidence: medium
+- pattern:
+    name: Relative Path
+    regex: "['\"](\\/[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=]+)['\"]"
+    confidence: low
+- pattern:
+    name: URL With Parameters
+    regex: "https?://[^/\\s]+(/[^\\s?]*\\?[^'\"\\s]+)"
+    confidence: high
+- pattern:
+    name: Callback URL
+    regex: "(?:callback|redirect)(?:_?url)?[\"'=]([^\"'&]+)"
+    confidence: high
+- pattern:
+    name: WebSocket URL
+    regex: "(wss?://[\\w\\-./?=&]+)"
+    confidence: high
