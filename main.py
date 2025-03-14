@@ -65,44 +65,45 @@ def parse_arguments(custom_args: Optional[List[str]] = None) -> argparse.Namespa
     request_group = parser.add_argument_group("Request Options")
 
     # --- General Options ---
-    general_group.add_argument("-v", "-verbose", action="store_true", help="Enable verbose output")
-    general_group.add_argument("-debug", action="store_true", help="Enable debug logging")
-    general_group.add_argument("-exit-on-error", action="store_true", help="Exit on error")
-    general_group.add_argument("-health-check", action="store_true", help="Perform health check")
-    general_group.add_argument("-o", "-output", help="Output file to write results")
-    general_group.add_argument("-format", choices=['csv', 'json', 'txt'], default='txt', help="Output format (csv, json, txt)")
-    general_group.add_argument("-progress", action="store_true", help="Show progress bar")
-    general_group.add_argument("-summary", action="store_true", help="Show detailed summary at the end")
-    general_group.add_argument("-silent", action="store_true", help="Silent mode, no output except findings")
+    # Fix: Use "verbose" as the dest parameter to ensure args.verbose is valid
+    general_group.add_argument("-v", "--verbose", dest="verbose", action="store_true", help="Enable verbose output")
+    general_group.add_argument("--debug", dest="debug", action="store_true", help="Enable debug logging")
+    general_group.add_argument("--exit-on-error", dest="exit_on_error", action="store_true", help="Exit on error")
+    general_group.add_argument("--health-check", dest="health_check", action="store_true", help="Perform health check")
+    general_group.add_argument("-o", "--output", dest="output", help="Output file to write results")
+    general_group.add_argument("--format", dest="format", choices=['csv', 'json', 'txt'], default='txt', help="Output format (csv, json, txt)")
+    general_group.add_argument("--progress", dest="progress", action="store_true", help="Show progress bar")
+    general_group.add_argument("--summary", dest="summary", action="store_true", help="Show detailed summary at the end")
+    general_group.add_argument("--silent", dest="silent", action="store_true", help="Silent mode, no output except findings")
 
     # --- URL Options ---
     url_exclusive = url_group.add_mutually_exclusive_group()
-    url_exclusive.add_argument("-u", "-url", dest="url", help="Single URL to scan")
-    url_exclusive.add_argument("-l", "-url-file", dest="url_file", help="File containing URLs to scan (one per line)")
+    url_exclusive.add_argument("-u", "--url", dest="url", help="Single URL to scan")
+    url_exclusive.add_argument("-l", "--url-file", dest="url_file", help="File containing URLs to scan (one per line)")
 
     # --- Mode Options ---
-    mode_group.add_argument("-mode", choices=['auto', 'lazy', 'anonymous'], default='auto', help="Scanning mode: auto, lazy, anonymous")
+    mode_group.add_argument("--mode", dest="mode", choices=['auto', 'lazy', 'anonymous'], default='auto', help="Scanning mode: auto, lazy, anonymous")
 
     # --- Pattern Options ---
     pattern_exclusive = pattern_group.add_mutually_exclusive_group()
-    pattern_exclusive.add_argument("-regex-file", help="Custom regex patterns file (YAML)")
-    pattern_exclusive.add_argument("-regex", help="Regex pattern from command line")
-    pattern_exclusive.add_argument("-secretfinder", action="store_true", help="Use SecretFinder patterns")
-    pattern_exclusive.add_argument("-linkfinder", action="store_true", help="Use LinkFinder patterns")
-    pattern_exclusive.add_argument("-emailfinder", action="store_true", help="Use EmailFinder patterns")
-    pattern_exclusive.add_argument("-uuidfinder", action="store_true", help="Use UUIDFinder patterns")
+    pattern_exclusive.add_argument("--regex-file", dest="regex_file", help="Custom regex patterns file (YAML)")
+    pattern_exclusive.add_argument("--regex", dest="regex", help="Regex pattern from command line")
+    pattern_exclusive.add_argument("--secretfinder", dest="secretfinder", action="store_true", help="Use SecretFinder patterns")
+    pattern_exclusive.add_argument("--linkfinder", dest="linkfinder", action="store_true", help="Use LinkFinder patterns")
+    pattern_exclusive.add_argument("--emailfinder", dest="emailfinder", action="store_true", help="Use EmailFinder patterns")
+    pattern_exclusive.add_argument("--uuidfinder", dest="uuidfinder", action="store_true", help="Use UUIDFinder patterns")
 
     # --- Request Options ---
-    request_group.add_argument("-t", "-threads", dest="threads", type=int, default=5, help="Number of threads")
-    request_group.add_argument("-timeout", type=int, default=DEFAULT_TIMEOUT, help=f"Request timeout in seconds (default: {DEFAULT_TIMEOUT})")
-    request_group.add_argument("-ua", "-user-agent", dest="user_agent", help="Custom User-Agent")
-    request_group.add_argument("-headers", help="Additional headers as JSON string")
-    request_group.add_argument("-cookie", help="Additional cookie as string")
-    request_group.add_argument("-insecure", action="store_true", help="Disable SSL verification")
-    request_group.add_argument("-follow-redirects", action="store_true", help="Follow redirects")
-    request_group.add_argument("-retries", type=int, default=0, help="Number of retries per request")
-    request_group.add_argument("-fullpath", action="store_true", help="Show full path in linkfinder")
-    request_group.add_argument("-delimiter", default=",", help="Delimiter for CSV output (default: ,)")
+    request_group.add_argument("-t", "--threads", dest="threads", type=int, default=5, help="Number of threads")
+    request_group.add_argument("--timeout", dest="timeout", type=int, default=DEFAULT_TIMEOUT, help=f"Request timeout in seconds (default: {DEFAULT_TIMEOUT})")
+    request_group.add_argument("--ua", "--user-agent", dest="user_agent", help="Custom User-Agent")
+    request_group.add_argument("--headers", dest="headers", help="Additional headers as JSON string")
+    request_group.add_argument("--cookie", dest="cookie", help="Additional cookie as string")
+    request_group.add_argument("--insecure", dest="insecure", action="store_true", help="Disable SSL verification")
+    request_group.add_argument("--follow-redirects", dest="follow_redirects", action="store_true", help="Follow redirects")
+    request_group.add_argument("--retries", dest="retries", type=int, default=0, help="Number of retries per request")
+    request_group.add_argument("--fullpath", dest="fullpath", action="store_true", help="Show full path in linkfinder")
+    request_group.add_argument("--delimiter", dest="delimiter", default=",", help="Delimiter for CSV output (default: ,)")
 
     return parser.parse_args(custom_args) if custom_args else parser.parse_args()
 
@@ -117,7 +118,7 @@ class LeakJS:
         self.urls: List[str] = []
         self.patterns: List[Dict] = []
         self.results: List[Dict] = []
-        self.loaded_pattern_files: set[str] = set()  # Track already loaded pattern files
+        self.loaded_pattern_files: set = set()  # Track already loaded pattern files
         self.session: requests.Session = self._create_session()
         self.setup_patterns()
 
@@ -147,7 +148,17 @@ class LeakJS:
         if self.args.regex_file:
             patterns_to_load.append((self.args.regex_file, "custom"))
         if self.args.regex:
-            self.patterns.append({"name": "cli-regex", "regex": self.args.regex, "type": "custom"})
+            # For CLI regex, we need to directly compile it here
+            try:
+                regex = re.compile(self.args.regex, re.MULTILINE | re.DOTALL)
+                self.patterns.append({
+                    "name": "cli-regex", 
+                    "regex": regex, 
+                    "type": "custom",
+                    "confidence": "medium"
+                })
+            except re.error as e:
+                logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} Invalid CLI regex: {e}")
 
         # Load default patterns if no specific pattern options are provided
         if not any([self.args.regex_file, self.args.regex, self.args.secretfinder, self.args.linkfinder, self.args.emailfinder, self.args.uuidfinder]):
@@ -190,34 +201,42 @@ class LeakJS:
                 if 'pattern' in pattern_data:
                     try:
                         pattern_info = pattern_data['pattern']
-                        regex = pattern_info['regex']
-                        re.compile(regex)  # Validate regex
-                        compiled_regex = re.compile(regex, re.MULTILINE | re.DOTALL)  # Compile regex
-                        pattern = {
-                            "name": pattern_info.get('name', 'unnamed'),
-                            "regex": compiled_regex,  # Store compiled regex
-                            "type": pattern_type,
-                            "confidence": pattern_info.get('confidence', 'medium')
-                        }
-                        self.patterns.append(pattern)
-                        count += 1
-                    except re.error as e:
-                        logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} Invalid regex in {pattern_file}: {pattern_info.get('name', 'unnamed')} - {e}")
+                        regex_str = pattern_info['regex']
+                        
+                        # Compile regex pattern
+                        try:
+                            compiled_regex = re.compile(regex_str, re.MULTILINE | re.DOTALL)
+                            
+                            # Create pattern dictionary with compiled regex
+                            pattern = {
+                                "name": pattern_info.get('name', 'unnamed'),
+                                "regex": compiled_regex,  # Store compiled regex
+                                "type": pattern_type,
+                                "confidence": pattern_info.get('confidence', 'medium')
+                            }
+                            self.patterns.append(pattern)
+                            count += 1
+                        except re.error as e:
+                            logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} Invalid regex in {pattern_file}: {pattern_info.get('name', 'unnamed')} - {e}")
+                            continue
+                    except KeyError as e:
+                        logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} Missing key in pattern: {e}")
+                        continue
 
-            if not self.args.health_check and self.args.verbose:
+            if not self.args.health_check and hasattr(self.args, 'verbose') and self.args.verbose:
                 logger.info(f"Loaded {count} patterns from {pattern_file}")
 
         except (yaml.YAMLError, FileNotFoundError, IOError) as e:
             logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} Error loading pattern file {pattern_file}: {e}")
-            if self.args.exit_on_error:
+            if hasattr(self.args, 'exit_on_error') and self.args.exit_on_error:
                 sys.exit(1)
 
     def load_urls(self) -> None:
         """Loads URLs from a single URL, a file, or stdin."""
         try:
-            if self.args.url:
+            if hasattr(self.args, 'url') and self.args.url:
                 self.urls = [self.args.url]
-            elif self.args.url_file:
+            elif hasattr(self.args, 'url_file') and self.args.url_file:
                 if not os.path.exists(self.args.url_file):
                     raise FileNotFoundError(f"URL file not found: {self.args.url_file}")
                 with open(self.args.url_file, "r", encoding="utf-8") as f:
@@ -229,35 +248,42 @@ class LeakJS:
             # Add scheme if missing
             self.urls = [url if url.startswith(('http://', 'https://')) else f'https://{url}' for url in self.urls]
 
-            if not self.urls and not self.args.health_check:
+            # When running normally (not health check) we need URLs
+            if not self.urls and not hasattr(self.args, 'health_check'):
                 logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} No URLs provided.")
                 sys.exit(1)
 
         except FileNotFoundError as e:
             logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} {e}")
-            if self.args.exit_on_error:
+            if hasattr(self.args, 'exit_on_error') and self.args.exit_on_error:
                 sys.exit(1)
         except Exception as e:
             logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} Error loading URLs: {e}")
-            if self.args.exit_on_error:
+            if hasattr(self.args, 'exit_on_error') and self.args.exit_on_error:
                 sys.exit(1)
 
     def fetch_url(self, url: str) -> Tuple[str, Optional[str]]:
         """Fetches the content of a URL."""
-        try:
-            response = self.session.get(
-                url,
-                timeout=self.args.timeout,
-                verify=not self.args.insecure,
-                allow_redirects=self.args.follow_redirects,
-                retries=self.args.retries  # Use retries
-            )
-            response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
-            return url, response.text
-
-        except requests.exceptions.RequestException as e:
-            logger.info(f"Error fetching {url}: {e}")
-            return url, None
+        max_retries = getattr(self.args, 'retries', 0) + 1  # Default to 1 attempt (0 retries)
+        
+        for attempt in range(max_retries):
+            try:
+                response = self.session.get(
+                    url,
+                    timeout=getattr(self.args, 'timeout', DEFAULT_TIMEOUT),
+                    verify=not getattr(self.args, 'insecure', False),
+                    allow_redirects=getattr(self.args, 'follow_redirects', False)
+                )
+                response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+                return url, response.text
+            except requests.exceptions.RequestException as e:
+                logger.info(f"Attempt {attempt+1}/{max_retries}: Error fetching {url}: {e}")
+                if attempt == max_retries - 1:  # Last attempt
+                    return url, None
+                # Exponential backoff
+                time.sleep(2 ** attempt)
+                
+        return url, None  # Fallback return if loop exits unexpectedly
 
     def scan_content(self, url: str, content: str, scan_type: str) -> List[Dict]:
         """Scans the content for patterns of the specified type."""
@@ -276,7 +302,7 @@ class LeakJS:
                             "finding": finding,
                             "pattern_name": pattern.get("name", "unnamed")
                         }
-                        if self.args.fullpath and scan_type == "linkfinder":
+                        if hasattr(self.args, 'fullpath') and self.args.fullpath and scan_type == "linkfinder":
                             parsed_url = urlparse(url)
                             result["full_path"] = urljoin(f"{parsed_url.scheme}://{parsed_url.netloc}", finding)
                         url_results.append(result)
@@ -286,9 +312,9 @@ class LeakJS:
 
     def process_urls(self) -> None:
         """Processes the URLs using a thread pool."""
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.args.threads) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=getattr(self.args, 'threads', 5)) as executor:
             future_to_url = {executor.submit(self.fetch_url, url): url for url in self.urls}
-            disable_progress = self.args.silent or not self.args.progress
+            disable_progress = getattr(self.args, 'silent', False) or not getattr(self.args, 'progress', False)
 
             with tqdm(total=len(self.urls), desc=f"{COLOR_BLUE}[INF]{STYLE_RESET} Processing URLs", disable=disable_progress) as progress_bar:
                 for future in concurrent.futures.as_completed(future_to_url):
@@ -309,22 +335,22 @@ class LeakJS:
 
     def determine_scan_type(self, url: str) -> str:
         """Determines the scan type based on the mode and URL."""
-        if self.args.mode == 'auto':
+        if getattr(self.args, 'mode', 'auto') == 'auto':
             return "secrets" if url.endswith('.js') else "linkfinder"
 
-        if self.args.linkfinder:
+        if hasattr(self.args, 'linkfinder') and self.args.linkfinder:
             return "linkfinder"
-        if self.args.secretfinder:
+        if hasattr(self.args, 'secretfinder') and self.args.secretfinder:
             return "secrets"
-        if self.args.emailfinder:
+        if hasattr(self.args, 'emailfinder') and self.args.emailfinder:
             return "email"
-        if self.args.uuidfinder:
+        if hasattr(self.args, 'uuidfinder') and self.args.uuidfinder:
             return "uuid"
         return "secrets" if url.endswith('.js') else "linkfinder"
 
     def print_results(self, url: str, findings: List[Dict]) -> None:
         """Prints the findings to the console."""
-        if not self.args.silent and self.args.v:
+        if not getattr(self.args, 'silent', False) and hasattr(self.args, 'verbose') and self.args.verbose:
             color_map = {"high": COLOR_RED, "medium": COLOR_YELLOW, "low": COLOR_GREEN}
             print(f"{COLOR_GREEN}[FOUND]{STYLE_RESET} {url}")
             for finding in findings:
@@ -337,7 +363,7 @@ class LeakJS:
 
     def print_summary(self, start_time: float) -> None:
         """Prints a summary of the scan results."""
-        if self.args.silent:
+        if getattr(self.args, 'silent', False):
             return
 
         elapsed_time = time.time() - start_time
@@ -357,7 +383,8 @@ class LeakJS:
             pattern_name = result['pattern_name']
             pattern_counts[pattern_name] = pattern_counts.get(pattern_name, 0) + 1
             confidence = result['confidence'].lower()
-            confidence_counts[confidence] += 1
+            if confidence in confidence_counts:
+                confidence_counts[confidence] += 1
 
         print(f"\n{COLOR_BLUE}[INF]{STYLE_RESET} Findings by pattern:")
         for pattern, count in sorted(pattern_counts.items(), key=lambda x: x[1], reverse=True):
@@ -371,7 +398,7 @@ class LeakJS:
 
     def write_output(self) -> None:
         """Writes the results to a file in the specified format."""
-        if not self.args.output:
+        if not hasattr(self.args, 'output') or not self.args.output:
             return
 
         if not self.results:
@@ -379,7 +406,7 @@ class LeakJS:
             return
 
         try:
-            output_file = self.args.output if self.args.output else "leaks.txt"  # Default output file
+            output_file = self.args.output if self.args.output else "leaks.txt"
 
             if not self.args.output:
                 # If no output file is specified, create one based on the URL
@@ -388,17 +415,18 @@ class LeakJS:
                     base_filename = parsed_url.netloc.replace('.', '_')
                 else:
                     base_filename = "leaks"
-                output_file = f"{base_filename}_leaks.{self.args.format}"
+                output_file = f"{base_filename}_leaks.{getattr(self.args, 'format', 'txt')}"
 
             with open(output_file, 'w', encoding='utf-8') as f:
-                if self.args.format == 'json':
+                if getattr(self.args, 'format', 'txt') == 'json':
                     json.dump(self.results, f, indent=4)
-                elif self.args.format == 'csv':
-                    fieldnames = self.results[0].keys()
-                    writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=self.args.delimiter)
-                    writer.writeheader()
-                    writer.writerows(self.results)
-                elif self.args.format == 'txt':
+                elif getattr(self.args, 'format', 'txt') == 'csv':
+                    fieldnames = self.results[0].keys() if self.results else []
+                    writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=getattr(self.args, 'delimiter', ','))
+                    if fieldnames:
+                        writer.writeheader()
+                        writer.writerows(self.results)
+                elif getattr(self.args, 'format', 'txt') == 'txt':
                     for result in self.results:
                         f.write(f"URL: {result['url']}\n")
                         f.write(f"Finding: {result['finding']}\n")
@@ -409,10 +437,10 @@ class LeakJS:
                             f.write(f"Full Path: {result['full_path']}\n")
                         f.write("-" * 30 + "\n")
                 else:
-                    logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} Invalid output format: {self.args.format}")
+                    logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} Invalid output format: {getattr(self.args, 'format', 'txt')}")
                     return
 
-            logger.info(f"{COLOR_GREEN}[SUCCESS]{STYLE_RESET} Results written to {output_file} in {self.args.format.upper()} format.")
+            logger.info(f"{COLOR_GREEN}[SUCCESS]{STYLE_RESET} Results written to {output_file} in {getattr(self.args, 'format', 'txt').upper()} format.")
 
         except Exception as e:
             logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} Error writing output to file: {e}")
@@ -421,27 +449,27 @@ class LeakJS:
         """Runs the LeakJS scanner."""
         try:
             # --- Mode-specific settings ---
-            if self.args.mode == 'lazy':
+            if getattr(self.args, 'mode', 'auto') == 'lazy':
                 self.args.timeout = 4
                 self.args.follow_redirects = True
                 self.args.retries = 2
-            elif self.args.mode == 'anonymous':
+            elif getattr(self.args, 'mode', 'auto') == 'anonymous':
                 # Implement Tor/proxy setup here (e.g., using a Tor proxy)
                 pass
 
-            if not self.patterns and not self.args.health_check:
+            if not self.patterns and not getattr(self.args, 'health_check', False):
                 logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} No valid patterns loaded. Exiting.")
                 return
 
             self.load_urls()
-            if self.urls or self.args.health_check:
+            if self.urls or getattr(self.args, 'health_check', False):
                 print_banner(self.args, self.urls)
             logger.debug(f"Loaded {len(self.urls)} URLs, {len(self.patterns)} patterns")
 
             start_time = time.time()
             self.process_urls()
 
-            if self.args.summary:
+            if hasattr(self.args, 'summary') and self.args.summary:
                 self.print_summary(start_time)
 
             self.write_output()
@@ -451,10 +479,10 @@ class LeakJS:
             sys.exit(1)
         except Exception as e:
             logger.error(f"{COLOR_RED}[ERR]{STYLE_RESET} Error during run: {e}")
-            if self.args.debug:
+            if hasattr(self.args, 'debug') and self.args.debug:
                 import traceback
                 traceback.print_exc()
-            if self.args.exit_on_error:
+            if hasattr(self.args, 'exit_on_error') and self.args.exit_on_error:
                 sys.exit(1)
 
     def health_check(self) -> None:
@@ -463,27 +491,27 @@ class LeakJS:
         print(f"{COLOR_BLUE}[INF]{STYLE_RESET} Running health check...")
 
         test_flags = [
-            ("-url", ["https://example.com"]),
-            ("-regex-file", ["test_patterns.yaml"]),
-            ("-secretfinder", []),
-            ("-linkfinder", []),
-            ("-emailfinder", []),
-            ("-uuidfinder", []),
-            ("-threads", ["2"]),
-            ("-timeout", ["5"]),
-            ("-ua", ["TestAgent"]),
-            ("-headers", ['{"Test-Header": "Value"}']),
-            ("-cookie", ["test=value"]),
-            ("-insecure", []),
-            ("-follow-redirects", []),
-            ("-summary", []),
-            ("-progress", []),
-            ("-exit-on-error", []),
-            ("-fullpath", []),
-            ("-v", []),
-            ("-o", ["test_output.txt"]),
-            ("-format", ["json"]),
-            ("-mode", ["auto"])
+            ("--url", ["https://example.com"]),
+            ("--regex-file", ["test_patterns.yaml"]),
+            ("--secretfinder", []),
+            ("--linkfinder", []),
+            ("--emailfinder", []),
+            ("--uuidfinder", []),
+            ("--threads", ["2"]),
+            ("--timeout", ["5"]),
+            ("--ua", ["TestAgent"]),
+            ("--headers", ['{"Test-Header": "Value"}']),
+            ("--cookie", ["test=value"]),
+            ("--insecure", []),
+            ("--follow-redirects", []),
+            ("--summary", []),
+            ("--progress", []),
+            ("--exit-on-error", []),
+            ("--fullpath", []),
+            ("--verbose", []),
+            ("--output", ["test_output.txt"]),
+            ("--format", ["json"]),
+            ("--mode", ["auto"])
         ]
 
         # Create a dummy test_patterns.yaml
@@ -533,11 +561,11 @@ def main() -> None:
     """Main function to run the LeakJS tool."""
     try:
         args = parse_arguments()
-        if args.debug:
+        if getattr(args, 'debug', False):
             logger.setLevel(logging.DEBUG)
 
         scanner = LeakJS(args)
-        if args.health_check:
+        if getattr(args, 'health_check', False):
             scanner.health_check()
         else:
             scanner.run()
