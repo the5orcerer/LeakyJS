@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import concurrent.futures
 import json
 import logging
@@ -7,6 +8,7 @@ import os
 import re
 import sys
 import time
+from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
@@ -19,12 +21,18 @@ from tqdm import tqdm
 
 # Initialize and configure
 colorama.init(autoreset=True)
-logging.basicConfig(level=logging.DEBUG if '--debug' in sys.argv else logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()])
+logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=[logging.StreamHandler()])
 logger = logging.getLogger("LeakJS")
 DEFAULT_TIMEOUT = 10
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 DEFAULT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "patterns")
-VERSION = "1.0.0"
+VERSION = "1.1.0"  # Increment version for changes
+
+# --- New Features ---
+# 1. Output to file (JSON, CSV, TXT)
+# 2. Proxy support
+# 3. Custom pattern addition via CLI
+# 4. Verbose mode
 
 def print_banner(args, urls):
     if args.silent: return
@@ -35,10 +43,11 @@ def print_banner(args, urls):
     print(f"Timeout: {args.timeout or DEFAULT_TIMEOUT}s")
     mode = "LinkFinder" if args.linkfinder else "SecretFinder" if args.secretfinder else "Both"
     print(f"Mode: {mode}")
+    if args.proxy:
+        print(f"Proxy: {args.proxy}")
     print(f"{Fore.BLUE}{'=' * 50}{Style.RESET_ALL}\n")
 
 def parse_args(custom_args=None):
-    import argparse
     parser = argparse.ArgumentParser(description="LeakJS - JavaScript secrets and endpoint scanner")
     
     # URL inputs
@@ -50,6 +59,7 @@ def parse_args(custom_args=None):
     # Pattern inputs
     pattern_group = parser.add_argument_group("Pattern Options")
     pattern_group.add_argument("--regex-file", help="Custom regex patterns file (YAML)")
+    parser.add_argument("--add-pattern", help="Add a custom regex pattern directly from the command line")
     pattern_group.add_argument("--secretfinder", action="store_true", help="Use SecretFinder patterns")
     pattern_group.add_argument("--linkfinder", action="store_true", help="Use LinkFinder patterns")
     
@@ -61,19 +71,23 @@ def parse_args(custom_args=None):
     request_group.add_argument("--headers", help="Additional headers as JSON string")
     request_group.add_argument("--insecure", action="store_true", help="Disable SSL verification")
     request_group.add_argument("--follow-redirects", action="store_true", help="Follow redirects")
-    
+    request_group.add_argument("--proxy", help="Proxy URL (e.g., http://127.0.0.1:8080)")
+
     # Output options
     output_group = parser.add_argument_group("Output Options")
     output_group.add_argument("--summary", action="store_true", help="Show summary at the end")
     output_group.add_argument("--silent", action="store_true", help="Silent mode, no output except findings")
     output_group.add_argument("--no-color", action="store_true", help="Disable colored output")
     output_group.add_argument("--progress", action="store_true", help="Show progress bar")
-    output_group.add_argument("--debug", action="store_true", help="Enable debug logging")
-    
+    output_group.add_argument("--output", help="Output file (JSON, CSV, TXT)")
+    output_group.add_argument("--output-format", choices=['json', 'csv', 'txt'], default='json', help="Output format (json, csv, txt)")
+    output_group.add_argument("-v", "--verbose", action="store_true", help="Increase verbosity (show more information)")
+
     # Misc options
     misc_group = parser.add_argument_group("Miscellaneous Options")
     misc_group.add_argument("--exit-on-error", action="store_true", help="Exit on error")
     misc_group.add_argument("--health-check", action="store_true", help="Perform health check")
+    misc_group.add_argument("--debug", action="store_true", help="Enable debug logging")
     
     return parser.parse_args(custom_args) if custom_args is not None else parser.parse_args()
 
@@ -87,7 +101,11 @@ class LeakJS:
         if self.args.no_color: colorama.deinit()
         self.session = self._create_session()
         self.setup_patterns()
-    
+        if self.args.debug:
+            logger.setLevel(logging.DEBUG)
+        if self.args.verbose:
+            logger.setLevel(logging.INFO) # setting level to info to show more details
+
     def _create_session(self) -> requests.Session:
         session = requests.Session()
         headers = {
@@ -102,16 +120,21 @@ class LeakJS:
             except json.JSONDecodeError as e:
                 logger.error(f"{Fore.RED}[ERR]{Style.RESET_ALL} Failed to parse custom headers JSON: {str(e)}")
         session.headers.update(headers)
+        if self.args.proxy:
+            session.proxies = {'http': self.args.proxy, 'https': self.args.proxy}
         return session
     
     def setup_patterns(self):
         patterns_to_load = []
         if self.args.regex_file:
             patterns_to_load.append((self.args.regex_file, "custom"))
-        if self.args.linkfinder or (not self.args.regex_file and not self.args.secretfinder):
+        if self.args.linkfinder or (not self.args.regex_file and not self.args.secretfinder and not self.args.add_pattern):
             patterns_to_load.append((os.path.join(DEFAULT_PATH, "linkfinder.yaml"), "linkfinder"))
-        if self.args.secretfinder or (not self.args.regex_file and not self.args.linkfinder):
+        if self.args.secretfinder or (not self.args.regex_file and not self.args.linkfinder and not self.args.add_pattern):
             patterns_to_load.append((os.path.join(DEFAULT_PATH, "secrets.yaml"), "secrets"))
+
+        if self.args.add_pattern:
+            self._add_pattern_from_cli(self.args.add_pattern)
         
         for pattern_file, pattern_type in patterns_to_load:
             if pattern_file in self.loaded_pattern_files:  # Skip if already loaded
@@ -119,6 +142,16 @@ class LeakJS:
             self._load_pattern_file(pattern_file, pattern_type)
             self.loaded_pattern_files.add(pattern_file)  # Mark as loaded
     
+    def _add_pattern_from_cli(self, pattern_string: str):
+        try:
+            pattern_data = {'name': 'cli_pattern', 'regex': pattern_string, 'confidence': 'high'}
+            re.compile(pattern_data['regex'])  # Validate regex
+            pattern_data['type'] = 'custom'
+            self.patterns.append(pattern_data)
+            logger.info(f"Added custom pattern from CLI: {pattern_string}")
+        except re.error as e:
+            logger.error(f"{Fore.RED}[ERR]{Style.RESET_ALL} Invalid regex pattern: {str(e)}")
+
     def _load_pattern_file(self, pattern_file: str, pattern_type: str):
         try:
             if not os.path.exists(pattern_file):
@@ -137,8 +170,8 @@ class LeakJS:
                             pattern_info['type'] = pattern_type
                             self.patterns.append(pattern_info)
                             count += 1
-                        except re.error:
-                            pass  # Skip invalid patterns
+                        except re.error as e:
+                            logger.debug(f"Skipping invalid pattern: {pattern.get('name', 'Unnamed')} - {e}")  # More specific logging
                 if not self.args.health_check:  # Avoid duplicate messages during health check
                     logger.info(f"Loaded {count} patterns from {pattern_file}")
         except (yaml.YAMLError, FileNotFoundError) as e:
@@ -164,14 +197,20 @@ class LeakJS:
     
     def fetch_url(self, url: str) -> Tuple[str, Optional[str]]:
         try:
+            if self.args.verbose:
+                print(f"{Fore.WHITE}[INFO]{Style.RESET_ALL} Fetching {url}")
             response = self.session.get(
                 url,
                 timeout=self.args.timeout or DEFAULT_TIMEOUT,
                 verify=not self.args.insecure,
                 allow_redirects=self.args.follow_redirects
             )
-            return url, response.text if response.status_code == 200 else None
-        except Exception as e:
+            response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+            return url, response.text
+        except requests.exceptions.HTTPError as e:
+            logger.warning(f"{Fore.YELLOW}[WARN]{Style.RESET_ALL} HTTP Error {e.response.status_code} for {url}")
+            return url, None
+        except requests.exceptions.RequestException as e:
             logger.debug(f"Error fetching {url}: {str(e)}")
             return url, None
     
@@ -191,8 +230,8 @@ class LeakJS:
                             "finding": finding,
                             "pattern_name": pattern.get("name", "unnamed")
                         })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Error processing pattern {pattern.get('name', 'Unnamed')}: {e}")
         return url_results
     
     def process_urls(self):
@@ -212,8 +251,8 @@ class LeakJS:
                             if matches:
                                 self.results.extend(matches)
                                 self.print_results(url, matches)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.error(f"Error processing {url}: {e}")
                     finally:
                         progress_bar.update(1)
 
@@ -253,6 +292,32 @@ class LeakJS:
         for confidence, count in confidence_counts.items():
             print(f"  {colors.get(confidence, '')}{confidence.capitalize()}{Style.RESET_ALL}: {count}")
 
+    def output_results(self):
+        if not self.args.output:
+            return
+
+        output_data = self.results
+
+        try:
+            if self.args.output_format == 'json':
+                with open(self.args.output, 'w') as f:
+                    json.dump(output_data, f, indent=4)
+                logger.info(f"{Fore.GREEN}[INF]{Style.RESET_ALL} Results saved to {self.args.output} in JSON format")
+            elif self.args.output_format == 'csv':
+                import csv
+                with open(self.args.output, 'w', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=output_data[0].keys())
+                    writer.writeheader()
+                    writer.writerows(output_data)
+                logger.info(f"{Fore.GREEN}[INF]{Style.RESET_ALL} Results saved to {self.args.output} in CSV format")
+            elif self.args.output_format == 'txt':
+                with open(self.args.output, 'w') as f:
+                    for result in output_data:
+                        f.write(f"{result['url']} - {result['pattern_name']} - {result['finding']}\n")
+                logger.info(f"{Fore.GREEN}[INF]{Style.RESET_ALL} Results saved to {self.args.output} in TXT format")
+        except Exception as e:
+            logger.error(f"{Fore.RED}[ERR]{Style.RESET_ALL} Error writing to output file: {str(e)}")
+
     def run(self):
         try:
             if not self.patterns:
@@ -265,6 +330,8 @@ class LeakJS:
             self.process_urls()
             if self.args.summary:
                 self.print_summary(start_time)
+            self.output_results()
+
         except KeyboardInterrupt:
             logger.error(f"\n{Fore.RED}[ERR]{Style.RESET_ALL} Interrupted by user. Exiting...")
             sys.exit(1)
@@ -285,7 +352,7 @@ class LeakJS:
             ("--linkfinder", []),
             ("--threads", ["2"]),
             ("--timeout", ["5"]),
-	    ("--user-agent", ["TestAgent"]),
+            ("--user-agent", ["TestAgent"]),
             ("--headers", ['{"Test-Header": "Value"}']),
             ("--insecure", []),
             ("--follow-redirects", []),
@@ -293,7 +360,9 @@ class LeakJS:
             ("--silent", []),
             ("--no-color", []),
             ("--progress", []),
-            ("--exit-on-error", [])
+            ("--exit-on-error", []),
+            ("--proxy", ["http://127.0.0.1:8080"]),
+            ("--add-pattern", ["test_pattern"])
         ]
 
         results = []
@@ -325,13 +394,11 @@ class LeakJS:
 def main():
     try:
         args = parse_args()
-        if args.debug:
-            logger.setLevel(logging.DEBUG)
-            
-        scanner = LeakJS(args)
         if args.health_check:
+            scanner = LeakJS(args)
             scanner.health_check()
         else:
+            scanner = LeakJS(args)
             scanner.run()
     except KeyboardInterrupt:
         print(f"\n{Fore.RED}[ERR]{Style.RESET_ALL} Interrupted by user. Exiting...")
